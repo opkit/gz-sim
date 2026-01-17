@@ -64,18 +64,29 @@ using namespace systems;
 /// \param[in] _op The operation string.
 /// \param[in] _topic The topic name string.
 /// \param[in] _type The message type string.
+/// \param[in] _wallMs The wall clock time in milliseconds (optional).
 /// \return A string that is the frame header.
-#define BUILD_HEADER(_op, _topic, _type) \
-    ((_op)+","+(_topic)+","+(std::string(_type))+",")
+#define BUILD_HEADER(_op, _topic, _type, _wallMs) \
+    ((_op)+","+(_topic)+","+(std::string(_type))+","+(_wallMs)+",")
 
 /// \brief Construction a complete websocket frame.
 /// \param[in] _op The operation string.
 /// \param[in] _topic The topic name string.
 /// \param[in] _type The message type string.
+/// \param[in] _wallMs The wall clock time in milliseconds.
 /// \param[in] _payload The complete payload string.
 /// \return A string that is the frame header.
-#define BUILD_MSG(_op, _topic, _type, _payload) \
-    (BUILD_HEADER(_op, _topic, _type) + _payload)
+#define BUILD_MSG(_op, _topic, _type, _wallMs, _payload) \
+    (BUILD_HEADER(_op, _topic, _type, _wallMs) + _payload)
+
+/// \brief Get current wall clock time in milliseconds as string.
+/// \return A string containing the wall clock time in milliseconds.
+inline std::string GetWallTimeMs()
+{
+  auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return std::to_string(wallMs);
+}
 
 /// \brief Gets the websocket server from the lws connection passed to a
 /// handler.
@@ -795,7 +806,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
       msg.add_data(topic);
 
     std::string data = BUILD_MSG(this->operations[PUBLISH], frameParts[0],
-        std::string("gz.msgs.StringMsg_V"), msg.SerializeAsString());
+        std::string("gz.msgs.StringMsg_V"), GetWallTimeMs(), msg.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -826,7 +837,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
     }
 
     std::string data = BUILD_MSG(this->operations[PUBLISH], frameParts[0],
-        std::string("gz.msgs.Publishers"), msg.SerializeAsString());
+        std::string("gz.msgs.Publishers"), GetWallTimeMs(), msg.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -845,7 +856,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
     this->node.Request("/gazebo/worlds", req, timeout, rep, result);
 
     std::string data = BUILD_MSG(this->operations[PUBLISH], frameParts[0],
-        std::string("gz.msgs.StringMsg_V"), rep.SerializeAsString());
+        std::string("gz.msgs.StringMsg_V"), GetWallTimeMs(), rep.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -880,7 +891,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
     }
 
     std::string data = BUILD_MSG(this->operations[PUBLISH], frameParts[0],
-        std::string("gz.msgs.Scene"), rep.SerializeAsString());
+        std::string("gz.msgs.Scene"), GetWallTimeMs(), rep.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -918,7 +929,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
     }
 
     std::string data = BUILD_MSG(this->operations[PUBLISH], frameParts[0],
-        std::string("gz.msgs.ParticleEmitter_V"),
+        std::string("gz.msgs.ParticleEmitter_V"), GetWallTimeMs(),
         rep.SerializeAsString());
 
     // Queue the message for delivery.
@@ -1076,7 +1087,7 @@ void WebsocketServer::OnRequest(int _socketId,
     gz::msgs::StringMsg msg;
     msg.set_data("service_not_found");
     std::string data = BUILD_MSG(this->operations[REQUEST], service,
-        msg.GetTypeName(), msg.SerializeAsString());
+        msg.GetTypeName(), GetWallTimeMs(), msg.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -1097,7 +1108,7 @@ void WebsocketServer::OnRequest(int _socketId,
 
   // Construct the response message
   std::string data = BUILD_MSG(this->operations[REQUEST], service,
-      repTypeName, repStr);
+      repTypeName, GetWallTimeMs(), repStr);
 
   // Queue the message for delivery.
   this->QueueMessage(this->connections[_socketId].get(),
@@ -1115,7 +1126,7 @@ void WebsocketServer::OnAsset(int _socketId,
     gz::msgs::StringMsg msg;
     msg.set_data("asset_uri_missing");
     std::string data = BUILD_MSG(this->operations[ASSET], "",
-        msg.GetTypeName(), msg.SerializeAsString());
+        msg.GetTypeName(), GetWallTimeMs(), msg.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -1161,7 +1172,7 @@ void WebsocketServer::OnAsset(int _socketId,
 
     // Construct the response message
     std::string data = BUILD_MSG(this->operations[ASSET], assetUri,
-        bytes.GetTypeName(), bytes.SerializeAsString());
+        bytes.GetTypeName(), GetWallTimeMs(), bytes.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -1172,7 +1183,7 @@ void WebsocketServer::OnAsset(int _socketId,
     gz::msgs::StringMsg msg;
     msg.set_data("asset_not_found");
     std::string data = BUILD_MSG(this->operations[ASSET], assetUri,
-        msg.GetTypeName(), msg.SerializeAsString());
+        msg.GetTypeName(), GetWallTimeMs(), msg.SerializeAsString());
 
     // Queue the message for delivery.
     this->QueueMessage(this->connections[_socketId].get(),
@@ -1199,20 +1210,15 @@ void WebsocketServer::OnWebsocketSubscribedMessage(
 
     if (timeDelta > this->publishPeriod)
     {
-      // Get the header, or build a new header if it doesn't exist.
-      auto header = this->publishHeaders.find(_info.Topic());
-      if (header == this->publishHeaders.end())
-      {
-        this->publishHeaders[_info.Topic()] = BUILD_HEADER(
-          this->operations[PUBLISH], _info.Topic(), _info.Type());
-        header = this->publishHeaders.find(_info.Topic());
-      }
-
       // Store the last time this topic was published.
       this->topicTimestamps[_info.Topic()] = systemTime;
 
+      // Build header with current wall clock time (cannot cache due to timestamp)
+      std::string header = BUILD_HEADER(
+          this->operations[PUBLISH], _info.Topic(), _info.Type(), GetWallTimeMs());
+
       // Construct the final message.
-      std::string msg = header->second + std::string(_data, _size);
+      std::string msg = header + std::string(_data, _size);
 
       // Send the message
       for (const int &socketId : iter->second)
@@ -1254,17 +1260,12 @@ void WebsocketServer::OnWebsocketSubscribedImageMessage(
 
     if (timeDelta > this->publishPeriod)
     {
-      // Get the header, or build a new header if it doesn't exist.
-      auto header = this->publishHeaders.find(_info.Topic());
-      if (header == this->publishHeaders.end())
-      {
-        this->publishHeaders[_info.Topic()] = BUILD_HEADER(
-          this->operations[PUBLISH], _info.Topic(), _info.Type());
-        header = this->publishHeaders.find(_info.Topic());
-      }
-
       // Store the last time this topic was published.
       this->topicTimestamps[_info.Topic()] = systemTime;
+
+      // Build header with current wall clock time (cannot cache due to timestamp)
+      std::string header = BUILD_HEADER(
+          this->operations[PUBLISH], _info.Topic(), _info.Type(), GetWallTimeMs());
 
       // convert to RGB image if needed
       common::Image image;
@@ -1298,7 +1299,7 @@ void WebsocketServer::OnWebsocketSubscribedImageMessage(
       std::string img(reinterpret_cast<char *>(buffer.data()), buffer.size());
 
       // Construct the final message.
-      std::string msg = header->second + img;
+      std::string msg = header + img;
 
       // Send the message
       for (const int &socketId : iter->second)
